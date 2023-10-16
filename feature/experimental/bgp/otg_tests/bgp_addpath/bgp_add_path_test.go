@@ -943,8 +943,7 @@ func TestAddPathSendRecv(t *testing.T) {
 	dut := ondatra.DUT(t, "dut")
 	ate := ondatra.ATE(t, "ate")
 
-	topo := ate.OTG()
-	top := topo.NewConfig(t)
+	top := gosnappi.NewConfig()
 	top.Ports().Add().SetName(ate.Port(t, "port1").ID())
 	top.Ports().Add().SetName(ate.Port(t, "port2").ID())
 	ibgpPort1 := top.Ports().Add().SetName(ate.Port(t, "port3").ID())
@@ -979,8 +978,7 @@ func TestAddPathSendRecv(t *testing.T) {
 func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, atePort gosnappi.Port) {
 	t.Log(tc.desc)
 
-	topo := ate.OTG()
-	top := topo.NewConfig(t)
+	top := gosnappi.NewConfig()
 	top.Ports().Add().SetName(ate.Port(t, "port1").ID())
 	top.Ports().Add().SetName(ate.Port(t, "port2").ID())
 	atePort = top.Ports().Add().SetName(ate.Port(t, "port3").ID())
@@ -1047,8 +1045,7 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, atePort gosnappi.Port) {
 	t.Log(tc.desc)
 
-	topo := ate.OTG()
-	top := topo.NewConfig(t)
+	top := gosnappi.NewConfig()
 	top.Ports().Add().SetName(ate.Port(t, "port1").ID())
 	top.Ports().Add().SetName(ate.Port(t, "port2").ID())
 	atePort = top.Ports().Add().SetName(ate.Port(t, "port3").ID())
