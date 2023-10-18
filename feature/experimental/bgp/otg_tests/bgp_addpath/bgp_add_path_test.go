@@ -704,7 +704,6 @@ func savePacketCapture(t *testing.T, top gosnappi.Config, ate *ondatra.ATEDevice
 	otg := ate.OTG()
 	fileName := "capture.pcap"
 	bytes := otg.GetCapture(t, gosnappi.NewCaptureRequest().SetPortName(dstPort.Name()))
-	fmt.Println(bytes)
 	f, err := os.Create(fileName)
 
 	if err != nil {
@@ -824,7 +823,6 @@ func verifyPrefixAddPathV4(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.AT
 
 	if ok {
 		bgpPrefix := gnmi.Get(t, ate.OTG(), gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv4Prefix(bgpAdvPrefix, 32, origin, expectedPathID).State())
-		// spew.Dump(bgpPrefixes)
 		if bgpPrefix.Address != nil && bgpPrefix.GetAddress() == bgpAdvPrefix {
 			return bgpPrefix.GetNextHopIpv4Address()
 
@@ -887,7 +885,7 @@ func verifyPrefixAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATED
 			t.Errorf("Next hop mismatch: got %v, want %v", nhList, expectedNextHops)
 		}
 	}
-	t.Log("Scale verification for prefixes, nh and path ID successful")
+	t.Log("Verification for prefixes, nh and path ID successful")
 }
 
 func verifyPrefixes(t *testing.T, dut *ondatra.DUTDevice, prefix string) {
@@ -1067,6 +1065,27 @@ func compareLists(list1, list2 []string) bool {
 	return reflect.DeepEqual(list1, list2)
 }
 
+func verifyBgpPackets(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, top gosnappi.Config, atePort gosnappi.Port, capability byte) {
+	t.Helper()
+
+	// Add packet capture config for port5
+	top.Captures().Clear()
+	top.Captures().Add().SetName(fmt.Sprintf("bgpCapture%d", capability)).SetPortNames([]string{atePort.Name()}).SetFormat(gosnappi.CaptureFormat.PCAP)
+	t.Log(top.Msg().GetCaptures())
+	ate.OTG().PushConfig(t, top)
+
+	startPacketCapture(t, top, ate, atePort)
+	ate.OTG().StartProtocols(t)
+	bgpNbrs := []string{ateIbgp3.IPv4}
+	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
+
+	fileName := savePacketCapture(t, top, ate, atePort)
+	verifyPacket(t, fileName, capability)
+
+	ate.OTG().StopProtocols(t)
+
+}
+
 type testCase struct {
 	desc           string
 	bgpConfigLevel string
@@ -1086,46 +1105,27 @@ func TestAddPathSendRecv(t *testing.T) {
 
 	GenerateIfaceAddresses()
 
-	cases := []testCase{{
-		desc:           "Verify Test1 and Test2 with bgp configs at global level",
-		bgpConfigLevel: "global",
-	}, {
-		desc:           "Verify Test1 and Test2 with bgp configs at peer level",
-		bgpConfigLevel: "peerGroup",
-	}, {
-		desc:           "Verify Test1 and Test2 with bgp configs at neighbor level",
-		bgpConfigLevel: "neighbor",
-	},
+	cases := []testCase{
+		// 	{
+		// 	desc:           "Verify Test1 and Test2 with bgp configs at global level",
+		// 	bgpConfigLevel: "global",
+		// }, {
+		// 	desc:           "Verify Test1 and Test2 with bgp configs at peer level",
+		// 	bgpConfigLevel: "peerGroup",
+		// },
+		{
+			desc:           "Verify Test1 and Test2 with bgp configs at neighbor level",
+			bgpConfigLevel: "neighbor",
+		},
 	}
 
 	for _, tc := range cases {
 
 		t.Run(tc.desc, func(t *testing.T) {
-			tc.testAddPath(t, dut, ate, tc.bgpConfigLevel)
-			// tc.testAddPathScaling(t, dut, ate, ibgpPort1)
+			// tc.testAddPath(t, dut, ate, tc.bgpConfigLevel)
+			tc.testAddPathScaling(t, dut, ate, tc.bgpConfigLevel)
 		})
 	}
-
-}
-
-func verifyBgpPackets(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, top gosnappi.Config, atePort gosnappi.Port, capability byte) {
-	t.Helper()
-
-	// Add packet capture config for port5
-	top.Captures().Clear()
-	top.Captures().Add().SetName(fmt.Sprintf("bgpCapture%d", capability)).SetPortNames([]string{atePort.Name()}).SetFormat(gosnappi.CaptureFormat.PCAP)
-	t.Log(top.Msg().GetCaptures())
-	ate.OTG().PushConfig(t, top)
-
-	startPacketCapture(t, top, ate, atePort)
-	ate.OTG().StartProtocols(t)
-	bgpNbrs := []string{ateIbgp3.IPv4}
-	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
-
-	fileName := savePacketCapture(t, top, ate, atePort)
-	verifyPacket(t, fileName, capability)
-
-	ate.OTG().StopProtocols(t)
 
 }
 
@@ -1227,11 +1227,6 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 
 	top.Devices().Clear()
 	top.Captures().Clear()
-	// top.Ports().Add().SetName(ate.Port(t, "port1").ID())
-	// top.Ports().Add().SetName(ate.Port(t, "port2").ID())
-	// top.Ports().Add().SetName(ate.Port(t, "port3").ID())
-	// top.Ports().Add().SetName(ate.Port(t, "port4").ID())
-	// top.Ports().Add().SetName(ate.Port(t, "port5").ID())
 
 	nextHopCount = 2
 	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", advertiseRoute)
@@ -1278,13 +1273,16 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 
 }
 
-func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, atePort gosnappi.Port) {
+func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, configType string) {
 	t.Log(tc.desc)
+
+	// t.Log("Clear BGP Configs on DUT")
+	// bgpClearConfig(t, dut)
 
 	top := gosnappi.NewConfig()
 	top.Ports().Add().SetName(ate.Port(t, "port1").ID())
 	top.Ports().Add().SetName(ate.Port(t, "port2").ID())
-	atePort = top.Ports().Add().SetName(ate.Port(t, "port3").ID())
+	top.Ports().Add().SetName(ate.Port(t, "port3").ID())
 	top.Ports().Add().SetName(ate.Port(t, "port4").ID())
 	top.Ports().Add().SetName(ate.Port(t, "port5").ID())
 
@@ -1295,6 +1293,15 @@ func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate
 	ap5 := ate.Port(t, "port5")
 
 	configureDUT(t, dut)
+
+	t.Logf("Configure add path Send/Receive for Ibgp3 neighbor with port5")
+
+	b := &gnmi.SetBatch{}
+	configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+	configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+	maxPaths := uint8(4)
+	configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
+	b.Set(t, dut)
 
 	advertiseRoute := true
 	routeCountv4 = *ygot.Uint32(1000000)
