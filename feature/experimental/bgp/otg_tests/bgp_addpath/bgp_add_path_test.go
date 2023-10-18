@@ -169,8 +169,8 @@ var (
 	bgpCapability     byte = 02 //Defined as per BGP message format
 	bgpAddPathMessage byte = 69 //Defined as per BGP message format
 	addPathSendRecv   byte = 03 //Defined as per BGP message format
-	addPathRecv       byte = 02 //Defined as per BGP message format
-	addPathSend       byte = 01 //Defined as per BGP message format
+	addPathRecv       byte = 01 //Defined as per BGP message format
+	addPathSend       byte = 02 //Defined as per BGP message format
 
 	advertisedRoutesv4Ebgp      = "203.0.113.4"
 	advertisedRoutesv4Ibgp      = "203.0.113.8"
@@ -706,7 +706,6 @@ func savePacketCapture(t *testing.T, top gosnappi.Config, ate *ondatra.ATEDevice
 	bytes := otg.GetCapture(t, gosnappi.NewCaptureRequest().SetPortName(dstPort.Name()))
 	fmt.Println(bytes)
 	f, err := os.Create(fileName)
-	// CreateTemp(".", "pcap")
 
 	if err != nil {
 		t.Fatalf("ERROR: Could not create temporary pcap file: %v\n", err)
@@ -715,10 +714,12 @@ func savePacketCapture(t *testing.T, top gosnappi.Config, ate *ondatra.ATEDevice
 		t.Fatalf("ERROR: Could not write bytes to pcap file: %v\n", err)
 	}
 	f.Close()
+	t.Logf("Saved packet capture to %s", fileName)
 
 	cs := gosnappi.NewControlState()
 	cs.Port().Capture().SetState(gosnappi.StatePortCaptureState.STOP)
 	otg.SetControlState(t, cs)
+	t.Logf("Stop Packet Capture")
 
 	return fileName
 }
@@ -746,12 +747,12 @@ func verifyAddPathCapability(t *testing.T, packet gopacket.Packet, addPathCapabi
 			openBgpMessage := applicationLayer.LayerContents()[29:]
 
 			for i := 0; i < len(openBgpMessage); i++ {
-
+				//checks is open message is present (2 = 0x2)
 				if openBgpMessage[i] == bgpCapability {
-					fmt.Println(openBgpMessage[i+bgpCapabilityOffset])
+					// Stores the parameter length to skip
 					capabilitySkipCount := int(openBgpMessage[i+bgpCapabilityOffset])
 
-					fmt.Println(openBgpMessage[i+addPathOffset])
+					// check if add path capability is present (69 = 0x45)
 					if openBgpMessage[i+addPathOffset] == bgpAddPathMessage {
 						if openBgpMessage[i+v4CapabilityOffset] == addPathCapability && openBgpMessage[i+v6CapabilityOffset] == addPathCapability {
 							return true
@@ -784,9 +785,9 @@ func verifyPacket(t *testing.T, pcapFile string, addPathCapability byte) {
 	var result bool
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
-		result = verifyAddPathCapability(t, packet, addPathSendRecv)
+		result = verifyAddPathCapability(t, packet, addPathCapability)
 		if result {
-			t.Log("Add path capability verification successful")
+			t.Logf("Add path capability verification successful for capability - %d", addPathCapability)
 			break
 		}
 	}
@@ -908,7 +909,7 @@ func configureMaxPaths(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice, c
 
 	switch configType {
 	case "global":
-		t.Logf("Configuring global max path")
+		t.Logf("Configuring global max path to %v", sendMax)
 
 		configPath4 := bgpPath.Global().AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().SendMax().Config()
 		gnmi.BatchReplace(b, configPath4, sendMax)
@@ -916,7 +917,7 @@ func configureMaxPaths(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice, c
 		gnmi.BatchReplace(b, configPath6, sendMax)
 
 	case "neighbor":
-		t.Logf("Configuring neighbor max path")
+		t.Logf("Configuring neighbor max path to %v", sendMax)
 
 		configPath4 := bgpPath.Neighbor(nbrAddress).AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().SendMax().Config()
 		gnmi.BatchReplace(b, configPath4, sendMax)
@@ -924,7 +925,7 @@ func configureMaxPaths(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice, c
 		gnmi.BatchReplace(b, configPath6, sendMax)
 
 	case "peerGroup":
-		t.Logf("Configuring peerGroup max path")
+		t.Logf("Configuring peerGroup max path to %v", sendMax)
 
 		configPath4 := bgpPath.PeerGroup(peerGroup).AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().SendMax().Config()
 		gnmi.BatchReplace(b, configPath4, sendMax)
@@ -945,7 +946,7 @@ func configureAddPathReceive(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDev
 
 	switch configType {
 	case "global":
-		t.Logf("Configuring global receive capability")
+		t.Logf("Configuring global receive capability to %v", receive)
 
 		configPath4 := bgpPath.Global().AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().Receive().Config()
 		gnmi.BatchReplace(b, configPath4, receive)
@@ -953,7 +954,7 @@ func configureAddPathReceive(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDev
 		gnmi.BatchReplace(b, configPath6, receive)
 
 	case "neighbor":
-		t.Logf("Configuring neighbor receive capability")
+		t.Logf("Configuring neighbor receive capability to %v", receive)
 
 		configPath4 := bgpPath.Neighbor(nbrAddress).AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().Receive().Config()
 		gnmi.BatchReplace(b, configPath4, receive)
@@ -961,7 +962,7 @@ func configureAddPathReceive(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDev
 		gnmi.BatchReplace(b, configPath6, receive)
 
 	case "peerGroup":
-		t.Logf("Configuring peerGroup receive capability")
+		t.Logf("Configuring peerGroup receive capability to %v", receive)
 
 		configPath4 := bgpPath.PeerGroup(peerGroup).AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().Receive().Config()
 		gnmi.BatchReplace(b, configPath4, receive)
@@ -982,7 +983,7 @@ func configureAddPathSend(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice
 
 	switch configType {
 	case "global":
-		t.Logf("Configuring global send capability")
+		t.Logf("Configuring global send capability to %v", send)
 
 		configPath4 := bgpPath.Global().AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().Send().Config()
 		gnmi.BatchReplace(b, configPath4, send)
@@ -990,7 +991,7 @@ func configureAddPathSend(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice
 		gnmi.BatchReplace(b, configPath6, send)
 
 	case "neighbor":
-		t.Logf("Configuring neighbor send capability")
+		t.Logf("Configuring neighbor send capability to %v", send)
 
 		configPath4 := bgpPath.Neighbor(nbrAddress).AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().Send().Config()
 		gnmi.BatchReplace(b, configPath4, send)
@@ -998,7 +999,7 @@ func configureAddPathSend(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice
 		gnmi.BatchReplace(b, configPath6, send)
 
 	case "peerGroup":
-		t.Logf("Configuring peerGroup send capability")
+		t.Logf("Configuring peerGroup send capability to %v", send)
 
 		configPath4 := bgpPath.PeerGroup(peerGroup).AfiSafi(oc.BgpTypes_AFI_SAFI_TYPE_IPV4_UNICAST).AddPaths().Send().Config()
 		gnmi.BatchReplace(b, configPath4, send)
@@ -1107,6 +1108,27 @@ func TestAddPathSendRecv(t *testing.T) {
 
 }
 
+func verifyBgpPackets(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, top gosnappi.Config, atePort gosnappi.Port, capability byte) {
+	t.Helper()
+
+	// Add packet capture config for port5
+	top.Captures().Clear()
+	top.Captures().Add().SetName(fmt.Sprintf("bgpCapture%d", capability)).SetPortNames([]string{atePort.Name()}).SetFormat(gosnappi.CaptureFormat.PCAP)
+	t.Log(top.Msg().GetCaptures())
+	ate.OTG().PushConfig(t, top)
+
+	startPacketCapture(t, top, ate, atePort)
+	ate.OTG().StartProtocols(t)
+	bgpNbrs := []string{ateIbgp3.IPv4}
+	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
+
+	fileName := savePacketCapture(t, top, ate, atePort)
+	verifyPacket(t, fileName, capability)
+
+	ate.OTG().StopProtocols(t)
+
+}
+
 func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, configType string) {
 	t.Log(tc.desc)
 
@@ -1128,13 +1150,13 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 
 	configureDUT(t, dut)
 
-	b := &gnmi.SetBatch{}
-	// Configure add path Send/Receive for Ibgp3 neighbor with port5
-	configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
-	configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
-	maxPaths := uint8(4)
-	configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
-	b.Set(t, dut)
+	// b := &gnmi.SetBatch{}
+	// // Configure add path Send/Receive for Ibgp3 neighbor with port5
+	// configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+	// configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+	// maxPaths := uint8(4)
+	// configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
+	// b.Set(t, dut)
 
 	routeCountv4 = *ygot.Uint32(1)
 	routeCountv6 = *ygot.Uint32(1)
@@ -1147,75 +1169,109 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 	configureOTG(t, top, ap4, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", advertiseRoute)
 	configureOTG(t, top, ap5, 0, globalAS, ateIbgp3, dutIbgp3, "INTERNAL", false)
 
-	// Add packet capture config for port5
-	top.Captures().Add().SetName("bgpcapture").SetPortNames([]string{atePort.Name()}).SetFormat(gosnappi.CaptureFormat.PCAP)
-	t.Log(top.Msg().GetCaptures())
-	ate.OTG().PushConfig(t, top)
+	// verifyBgpPackets(t, dut, ate, top, atePort, addPathSendRecv)
 
-	startPacketCapture(t, top, ate, atePort)
+	// addPathCapability := []byte{addPathRecv, addPathSend, addPathSendRecv}
+	addPathCapability := []byte{addPathSendRecv}
+
+	for _, capability := range addPathCapability {
+		t.Logf("Configuring add path capability to %v", capability)
+
+		switch capability {
+		case addPathSendRecv:
+			t.Logf("Configure add path Send/Receive for Ibgp3 neighbor with port5")
+
+			b := &gnmi.SetBatch{}
+			configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+			configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+			maxPaths := uint8(4)
+			configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
+			b.Set(t, dut)
+			verifyBgpPackets(t, dut, ate, top, atePort, addPathSendRecv)
+
+		case addPathSend:
+			t.Logf("Configure add path Send for Ibgp3 neighbor with port5")
+			b := &gnmi.SetBatch{}
+			configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", false)
+			configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+			maxPaths := uint8(4)
+			configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
+			b.Set(t, dut)
+			verifyBgpPackets(t, dut, ate, top, atePort, addPathSend)
+
+		case addPathRecv:
+			t.Logf("Configure add path Receive for Ibgp3 neighbor with port5")
+			b := &gnmi.SetBatch{}
+			configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
+			configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", false)
+			maxPaths := uint8(4)
+			configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
+			b.Set(t, dut)
+			verifyBgpPackets(t, dut, ate, top, atePort, addPathRecv)
+		}
+	}
+
 	ate.OTG().StartProtocols(t)
-
 	bgpNbrs := []string{ateEbgp1.IPv4, ateEbgp2.IPv4, ateIbgp1.IPv4, ateIbgp2.IPv4, ateIbgp3.IPv4}
 	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
 
-	//verify that the DUT negotiated addpath cability with Send/Receive field set to "3"
-	fileName := savePacketCapture(t, top, ate, atePort)
-	verifyPacket(t, fileName, addPathSendRecv)
+	expectedPathID := []uint32{1, 2}
 
-	ate.OTG().StopProtocols(t)
+	nextHopsv4 := []string{ateEbgp1.IPv4, ateEbgp2.IPv4}
+	verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
 
-	// expectedPathID := []uint32{1, 2}
+	nextHopsv4 = []string{ateIbgp1.IPv4, ateIbgp2.IPv4}
+	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
 
-	// nextHopsv4 := []string{ateEbgp1.IPv4, ateEbgp2.IPv4}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-
-	// nextHopsv4 = []string{ateIbgp1.IPv4, ateIbgp2.IPv4}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
-
-	// top = gosnappi.NewConfig()
+	top.Devices().Clear()
+	top.Captures().Clear()
 	// top.Ports().Add().SetName(ate.Port(t, "port1").ID())
 	// top.Ports().Add().SetName(ate.Port(t, "port2").ID())
 	// top.Ports().Add().SetName(ate.Port(t, "port3").ID())
 	// top.Ports().Add().SetName(ate.Port(t, "port4").ID())
 	// top.Ports().Add().SetName(ate.Port(t, "port5").ID())
 
-	// nextHopCount = 2
-	// configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", advertiseRoute)
-	// configureOTG(t, top, ap2, 0, ebgpAteAS2, ateEbgp2, dutEbgp2, "EXTERNAL", advertiseRoute)
-	// configureOTG(t, top, ap3, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", advertiseRoute)
-	// configureOTG(t, top, ap4, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", advertiseRoute)
-	// configureOTG(t, top, ap5, 0, globalAS, ateIbgp3, dutIbgp3, "INTERNAL", false)
+	nextHopCount = 2
+	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", advertiseRoute)
+	configureOTG(t, top, ap2, 0, ebgpAteAS2, ateEbgp2, dutEbgp2, "EXTERNAL", advertiseRoute)
+	configureOTG(t, top, ap3, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", advertiseRoute)
+	configureOTG(t, top, ap4, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", advertiseRoute)
+	configureOTG(t, top, ap5, 0, globalAS, ateIbgp3, dutIbgp3, "INTERNAL", false)
 
-	// ate.OTG().PushConfig(t, top)
-	// ate.OTG().StartProtocols(t)
-	// verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
+	ate.OTG().PushConfig(t, top)
+	ate.OTG().StartProtocols(t)
+	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
 
-	// // Verify that the DUT is advertising multiple paths to prefix-1 to RRCs ATE3 and ATE4
-	// // as well as to the RRS ATE5 with different path-ids
-	// expectedPathID = []uint32{1, 2, 3, 4}
-	// nextHopsv4 = []string{ateEbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateEbgp1.IPv4)).String(), ateEbgp2.IPv4, incrementIPv4Address(net.ParseIP(ateEbgp2.IPv4)).String()}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	// Verify that the DUT is advertising multiple paths to prefix-1 to RRCs ATE3 and ATE4
+	// as well as to the RRS ATE5 with different path-ids
+	expectedPathID = []uint32{1, 2, 3, 4}
+	nextHopsv4 = []string{ateEbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateEbgp1.IPv4)).String(),
+		ateEbgp2.IPv4, incrementIPv4Address(net.ParseIP(ateEbgp2.IPv4)).String()}
+	verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
 
-	// //Verify that the DUT advertises multiple paths for prefix-2 to ATE5 with different path-ids
-	// nextHopsv4 = []string{ateIbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp1.IPv4)).String(), ateIbgp2.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp2.IPv4)).String()}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
+	//Verify that the DUT advertises multiple paths for prefix-2 to ATE5 with different path-ids
+	nextHopsv4 = []string{ateIbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp1.IPv4)).String(),
+		ateIbgp2.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp2.IPv4)).String()}
+	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
 
-	// //Verify that ATE5 receives only 3 different paths (out of 4) w/ unique path-ids from DUT for prefix-2
-	// maxPaths = uint8(3)
-	// configureMaxPaths(t, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
-	// expectedPathID = []uint32{1, 2, 3}
+	//Verify that ATE5 receives only 3 different paths (out of 4) w/ unique path-ids from DUT for prefix-2
+	maxPaths := uint8(3)
+	b := &gnmi.SetBatch{}
+	configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
+	b.Set(t, dut)
 
-	// nextHopsv4 = []string{ateEbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateEbgp1.IPv4)).String(), ateEbgp2.IPv4}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	expectedPathID = []uint32{1, 2, 3}
+	nextHopsv4 = []string{ateEbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateEbgp1.IPv4)).String(), ateEbgp2.IPv4}
+	verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
+	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
 
-	// nextHopsv4 = []string{ateIbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp1.IPv4)).String(), ateIbgp2.IPv4}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
+	nextHopsv4 = []string{ateIbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp1.IPv4)).String(), ateIbgp2.IPv4}
+	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
 
 	ate.OTG().StopProtocols(t)
 	time.Sleep(5 * time.Second)
