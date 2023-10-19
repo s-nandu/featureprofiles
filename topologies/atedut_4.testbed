@@ -5,6 +5,7 @@
 
 duts {
   id: "dut"
+  vendor: JUNIPER
   ports {
     id: "port1"
   }
@@ -16,6 +17,9 @@ duts {
   }
   ports {
     id: "port4"
+  }
+  ports {
+    id: "port5"
   }
 }
 
@@ -32,6 +36,9 @@ ates {
   }
   ports {
     id: "port4"
+  }
+  ports {
+    id: "port5"
   }
 }
 
@@ -54,3 +61,9 @@ links {
   a: "dut:port4"
   b: "ate:port4"
 }
+
+links {
+  a: "dut:port5"
+  b: "ate:port5"
+}
+
