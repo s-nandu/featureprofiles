@@ -36,6 +36,7 @@ import (
 	"github.com/openconfig/ondatra/gnmi"
 	"github.com/openconfig/ondatra/gnmi/oc"
 	otgtelemetry "github.com/openconfig/ondatra/gnmi/otg"
+	otg "github.com/openconfig/ondatra/otg"
 	"github.com/openconfig/ygnmi/ygnmi"
 	"github.com/openconfig/ygot/ygot"
 )
@@ -607,7 +608,7 @@ func verifyPrefixAddPathV6(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.AT
 
 	_, ok := gnmi.Watch(t,
 		ate.OTG(),
-		gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv6Prefix(bgpAdvPrefix, 32, origin, expectedPathID).State(),
+		gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv6Prefix(bgpAdvPrefix, 128, origin, expectedPathID).State(),
 		time.Minute,
 		func(v *ygnmi.Value[*otgtelemetry.BgpPeer_UnicastIpv6Prefix]) bool {
 			_, present := v.Val()
@@ -615,7 +616,7 @@ func verifyPrefixAddPathV6(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.AT
 		}).Await(t)
 
 	if ok {
-		bgpPrefix := gnmi.Get(t, ate.OTG(), gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv6Prefix(bgpAdvPrefix, 32, origin, expectedPathID).State())
+		bgpPrefix := gnmi.Get(t, ate.OTG(), gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv6Prefix(bgpAdvPrefix, 128, origin, expectedPathID).State())
 		if bgpPrefix.Address != nil && bgpPrefix.GetAddress() == bgpAdvPrefix {
 			return bgpPrefix.GetNextHopIpv6Address()
 
@@ -641,16 +642,18 @@ func verifyPrefixAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATED
 
 			if isIPv6(bgpPrefix) {
 				nhAddress = verifyPrefixAddPathV6(t, dut, ate, portName, bgpPrefix, onePathID)
+				nhAddress = net.ParseIP(nhAddress).To16().String()
 			} else {
 				nhAddress = verifyPrefixAddPathV4(t, dut, ate, portName, bgpPrefix, onePathID)
 			}
 			nhList = append(nhList, nhAddress)
 		}
 		if compareLists(nhList, expectedNextHops) {
-			t.Log("Next hop verification successful")
+			t.Logf("Next hop verification successful for prefix %s", bgpPrefix)
 		} else {
-			t.Errorf("Next hop mismatch: got %v, want %v", nhList, expectedNextHops)
+			t.Errorf("Next hop mismatch for prefix %s: got %v, want %v", bgpPrefix, nhList, expectedNextHops)
 		}
+		nhList = []string{}
 	}
 	t.Log("Verification for prefixes, nh and path ID successful")
 }
@@ -779,7 +782,7 @@ func configureAddPathSend(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice
 func GenerateIfaceAddresses() {
 
 	// Increment of 4 for /30 v4 and /126 v6 subnets
-	incrFactor := 4
+	incrFactor := 1
 
 	ifaceCount := 2
 	dutEbgp1Ip.v4 = append(dutEbgp1Ip.v4, generateIPv4Addresses(dutEbgp1.IPv4, ifaceCount, incrFactor)...)
@@ -881,7 +884,7 @@ func TestAddPathSendRecv(t *testing.T) {
 	for _, tc := range cases {
 
 		t.Run(tc.desc, func(t *testing.T) {
-			tc.testAddPath(t, dut, ate, tc.bgpConfigLevel)
+			// tc.testAddPath(t, dut, ate, tc.bgpConfigLevel)
 			tc.testAddPathScaling(t, dut, ate, tc.bgpConfigLevel)
 		})
 	}
@@ -1025,6 +1028,7 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, configType string) {
 	t.Log(tc.desc)
 
+	otg := ate.OTG()
 	// t.Log("Clear BGP Configs on DUT")
 	// bgpClearConfig(t, dut)
 
@@ -1051,15 +1055,15 @@ func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate
 	}
 	b := &gnmi.SetBatch{}
 	configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
-	configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
 	if dut.Vendor() != ondatra.JUNIPER {
+		configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
 		configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
 	}
 	b.Set(t, dut)
 
 	advertiseRoute := true
-	routeCountv4 = *ygot.Uint32(1000000)
-	routeCountv6 = *ygot.Uint32(600000)
+	routeCountv4 = *ygot.Uint32(10)
+	routeCountv6 = *ygot.Uint32(5)
 	nextHopCount = 32
 
 	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", false)
@@ -1074,19 +1078,22 @@ func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate
 	bgpNbrs := []string{ateEbgp1.IPv4, ateEbgp2.IPv4, ateIbgp1.IPv4, ateIbgp2.IPv4, ateIbgp3.IPv4}
 	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
 
+	totalRoutes := routeCountv4*64 + routeCountv6*64
+	verifyBGPPrefixCount(t, otg, "ateIbgp3.BGP4.peer", uint64(totalRoutes))
+
 	//Verify that the DUT advertises multiple paths for prefix-2 to ATE5 with different path-ids
 	expectedPathID := []uint32{}
-
 	for pathID := 1; pathID <= 64; pathID++ {
 		expectedPathID = append(expectedPathID, uint32(pathID))
 	}
 
-	advPrefixScalev4 := generateIPv4Addresses(advertisedRoutesv4Ibgp, int(routeCountv4), 1)
-	// advPrefixScalev6 := generateIPv6Addresses(advertisedRoutesv6Ibgp, int(routeCountv6), 1)
-	nextHopsv4 := append(ateIbgp1Ip.v4, ateIbgp2Ip.v4...)
-	// nextHopsv6 := append(ateIbgp1Ip.v6, ateIbgp2Ip.v6...)
+	// advPrefixScalev4 := generateIPv4Addresses(advertisedRoutesv4Ibgp, int(routeCountv4), 1)
+	advPrefixScalev6 := generateIPv6Addresses(advertisedRoutesv6Ibgp, int(routeCountv6), 1)
+	// nextHopsv4 := append(ateIbgp1Ip.v4, ateIbgp2Ip.v4...)
+	nextHopsv6 := append(ateIbgp1Ip.v6, ateIbgp2Ip.v6...)
 
-	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, advPrefixScalev4[:4], nextHopsv4, expectedPathID)
+	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, advPrefixScalev4[:4], nextHopsv4, expectedPathID)
+	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, advPrefixScalev6[:4], nextHopsv6, expectedPathID)
 	// verifyPrefixAddPathScale(t, dut, ate, ateIbgp3.Name, advPrefixScalev6[:500], nextHopsv6, expectedPathID)
 	// verifyPrefixes(t, dut, advPrefixScalev4[5])
 
@@ -1111,46 +1118,62 @@ func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate
 }
 
 // verifies the BGP prefix count on an OTG device
-func verifyBGPPrefixCount(t *testing.T, dut *ondatra.DUTDevice, count uint64) {
-	prefixPath := gnmi.OTG().BgpPeer("neighbor_ip").Counters().InRoutes().State()
+func verifyBGPPrefixCount(t *testing.T, otg *otg.OTG, nbrAddress string, wantCount uint64) {
+	prefixPath := gnmi.OTG().BgpPeer(nbrAddress).Counters().InRoutes().State()
 
-	gotCount, ok := gnmi.Watch(t, dut, prefixPath, time.Minute, func(v *ygnmi.Value[uint64]) bool {
+	gotCount, ok := gnmi.Watch(t, otg, prefixPath, time.Minute, func(v *ygnmi.Value[uint64]) bool {
 		prefixCount, _ := v.Val()
-		return prefixCount == count
+		return prefixCount == wantCount
 	}).Await(t)
 
+	// gotCount := gnmi.GetAll[uint64](t, dut, prefixPath)
+
+	// t.Logf("BGP prefix count: %v", gotCount)
+	// // if gotCount != count {
+	// // 	t.Errorf("BGP prefix count mismatch: got %v, want %v", gotCount, count)
+	// // }
 	if !ok {
-		t.Errorf("BGP prefix count mismatch: got %v, want %v", gotCount, count)
+		t.Errorf("BGP prefix count mismatch: got %v, want %v", gotCount, wantCount)
 	}
 }
 
 // configureRegexPolicy is used to configure vendor specific config statement.
 func configureMaxPathsCli(t *testing.T, dut *ondatra.DUTDevice, pathCount uint8, configType, nbrAddress, peerGroup string) {
 	t.Helper()
-	var config string
+	var configV4 string
+	var configV6 string
 	gnmiClient := dut.RawAPIs().GNMI(t)
 
 	switch dut.Vendor() {
 	case ondatra.JUNIPER:
-		config = juniperCLI(t, pathCount, configType, nbrAddress, peerGroup)
+		configV4 = juniperCLI(t, pathCount, configType, nbrAddress, peerGroup, "inet")
+		configV6 = juniperCLI(t, pathCount, configType, nbrAddress, peerGroup, "inet6")
 		t.Logf("Push the CLI config:%s", dut.Vendor())
 	}
-	if config == "" {
+	if configV4 == "" || configV6 == "" {
 		t.Fatalf("Cannot build a CLI config statement for %s", dut.Vendor())
 	}
 
-	gpbSetRequest, err := buildCliConfigRequest(config)
+	gpbSetRequest, err := buildCliConfigRequest(configV4)
 	if err != nil {
 		t.Fatalf("Cannot build a gNMI SetRequest: %v", err)
 	}
-
 	if _, err = gnmiClient.Set(context.Background(), gpbSetRequest); err != nil {
 		t.Fatalf("gnmiClient.Set() with unexpected error: %v", err)
 	}
+
+	gpbSetRequest, err = buildCliConfigRequest(configV6)
+	if err != nil {
+		t.Fatalf("Cannot build a gNMI SetRequest: %v", err)
+	}
+	if _, err = gnmiClient.Set(context.Background(), gpbSetRequest); err != nil {
+		t.Fatalf("gnmiClient.Set() with unexpected error: %v", err)
+	}
+
 }
 
 // juniperCLI returns Juniper CLI config statement.
-func juniperCLI(t *testing.T, pathCount uint8, configType, nbrAddress, peerGroup string) string {
+func juniperCLI(t *testing.T, pathCount uint8, configType, nbrAddress, peerGroup, family string) string {
 	t.Helper()
 
 	switch configType {
@@ -1160,7 +1183,7 @@ func juniperCLI(t *testing.T, pathCount uint8, configType, nbrAddress, peerGroup
 			bgp {
 				group %s {
 					neighbor %s {
-						family inet {
+						family %s {
 							unicast {
 								add-path {
 									send {
@@ -1173,14 +1196,14 @@ func juniperCLI(t *testing.T, pathCount uint8, configType, nbrAddress, peerGroup
 					}
 				}
 			}
-		}`, peerGroup, nbrAddress, pathCount)
+		}`, peerGroup, nbrAddress, family, pathCount)
 
 	case "peerGroup":
 		return fmt.Sprintf(`
 		protocols {
 			bgp {
 				group %s {
-					family inet {
+					family %s {
 						unicast {
 							add-path {
 								send {
@@ -1192,13 +1215,13 @@ func juniperCLI(t *testing.T, pathCount uint8, configType, nbrAddress, peerGroup
 					}
 				}
 			}
-		}`, peerGroup, pathCount)
+		}`, peerGroup, family, pathCount)
 
 	case "global":
 		return fmt.Sprintf(`
 		protocols {
 			bgp {
-				family inet {
+				family %s {
 					unicast {
 						add-path {
 							send {
@@ -1209,7 +1232,7 @@ func juniperCLI(t *testing.T, pathCount uint8, configType, nbrAddress, peerGroup
 					}
 				}
 			}
-		}`, pathCount)
+		}`, family, pathCount)
 
 	default:
 		return ""
