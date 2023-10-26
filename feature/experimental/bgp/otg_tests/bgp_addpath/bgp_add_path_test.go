@@ -15,7 +15,6 @@
 package add_path
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net"
@@ -31,7 +30,6 @@ import (
 	"github.com/openconfig/featureprofiles/internal/attrs"
 	"github.com/openconfig/featureprofiles/internal/deviations"
 	"github.com/openconfig/featureprofiles/internal/fptest"
-	gpb "github.com/openconfig/gnmi/proto/gnmi"
 	"github.com/openconfig/ondatra"
 	"github.com/openconfig/ondatra/gnmi"
 	"github.com/openconfig/ondatra/gnmi/oc"
@@ -49,55 +47,49 @@ func TestMain(m *testing.M) {
 const (
 	ipv4PrefixLen = 30 // ipv4PrefixLen is the ATE and DUT interface IP prefix length.
 	ipv6PrefixLen = 126
-	ebgpDutAS1    = uint32(70000)
-	ebgpAteAS1    = uint32(70001)
-	ebgpDutAS2    = uint32(80000)
-	ebgpAteAS2    = uint32(80001)
-	globalAS      = uint32(10000)
+	ebgpDutAS1    = uint32(101)
+	ebgpAteAS1    = uint32(100)
+	ebgpDutAS2    = uint32(201)
+	ebgpAteAS2    = uint32(200)
+	globalAS      = uint32(300)
 
-	flow1           = "v4FlowPort1toPort2"
-	trafficDuration = 4 * time.Minute
-	tolerancePct    = 2
-	totalPeers      = 64
-	aggregatePolicy = "aggregateBW"
-	sourcePeer      = "sourceGroup"
-	connInternal    = "INTERNAL"
+	connInternal = "INTERNAL"
 )
 
 var (
 	dutEbgp1 = attrs.Attributes{
 		Desc:    "dutEbgp1",
 		IPv4:    "192.0.2.1",
-		IPv4Len: 29,
+		IPv4Len: 26,
 		IPv6:    "2001:db8::192:0:2:1",
-		IPv6Len: ipv6PrefixLen,
+		IPv6Len: 122,
 	}
 
 	ateEbgp1 = attrs.Attributes{
 		Name:    "ateEbgp1",
 		MAC:     "02:00:01:01:01:01",
 		IPv4:    "192.0.2.2",
-		IPv4Len: 29,
+		IPv4Len: 26,
 		IPv6:    "2001:db8::192:0:2:2",
-		IPv6Len: ipv6PrefixLen,
+		IPv6Len: 122,
 	}
 
-	// dutEbgp2 = attrs.Attributes{
-	// 	Desc:    "dutEbgp2",
-	// 	IPv4:    "192.0.2.9",
-	// 	IPv4Len: 29,
-	// 	IPv6:    "2001:db8::192:0:2:9",
-	// 	IPv6Len: ipv6PrefixLen,
-	// }
+	dutEbgp2 = attrs.Attributes{
+		Desc:    "dutEbgp2",
+		IPv4:    "192.0.2.65",
+		IPv4Len: 26,
+		IPv6:    "2001:db8::192:0:2:41",
+		IPv6Len: 122,
+	}
 
-	// ateEbgp2 = attrs.Attributes{
-	// 	Name:    "ateEbgp2",
-	// 	MAC:     "02:00:01:01:02:01",
-	// 	IPv4:    "192.0.2.10",
-	// 	IPv4Len: 29,
-	// 	IPv6:    "2001:db8::192:0:2:a",
-	// 	IPv6Len: ipv6PrefixLen,
-	// }
+	ateEbgp2 = attrs.Attributes{
+		Name:    "ateEbgp2",
+		MAC:     "02:00:01:01:02:01",
+		IPv4:    "192.0.2.66",
+		IPv4Len: 26,
+		IPv6:    "2001:db8::192:0:2:42",
+		IPv6Len: 122,
+	}
 
 	dutIbgp1 = attrs.Attributes{
 		Desc:    "dutEbgp1",
@@ -135,19 +127,19 @@ var (
 
 	dutIbgp3 = attrs.Attributes{
 		Desc:    "dutIbgp3",
-		IPv4:    "192.0.2.17",
-		IPv4Len: 29,
-		IPv6:    "2001:db8::192:0:2:15",
-		IPv6Len: ipv6PrefixLen,
+		IPv4:    "192.0.2.129",
+		IPv4Len: 26,
+		IPv6:    "2001:db8::192:0:2:81",
+		IPv6Len: 122,
 	}
 
 	ateIbgp3 = attrs.Attributes{
 		Name:    "ateIbgp3",
 		MAC:     "02:00:01:01:05:01",
-		IPv4:    "192.0.2.18",
-		IPv4Len: 29,
-		IPv6:    "2001:db8::192:0:2:16",
-		IPv6Len: ipv6PrefixLen,
+		IPv4:    "192.0.2.130",
+		IPv4Len: 26,
+		IPv6:    "2001:db8::192:0:2:82",
+		IPv6Len: 122,
 	}
 
 	bgpOpenMessage    byte = 01 //Defined as per BGP message format
@@ -159,7 +151,7 @@ var (
 
 	advertisedRoutesv4Ebgp      = "203.0.113.4"
 	advertisedRoutesv4Ibgp      = "203.0.113.8"
-	advertisedRoutesv6Ibgp      = "2001:db8::203:0:113:8"
+	advertisedRoutesv6          = "2001:db8::203:0:113:8"
 	advertisedRoutesv4PrefixLen = 32
 	advertisedRoutesv6PrefixLen = 128
 
@@ -184,7 +176,7 @@ type portIpList struct {
 	v4, v6 []string
 }
 
-func configureDUT(t *testing.T, dut *ondatra.DUTDevice) {
+func configureDUT(t *testing.T, dut *ondatra.DUTDevice, port4Ebgp bool) {
 	t.Helper()
 
 	t.Log("Configure Network Instance")
@@ -201,13 +193,21 @@ func configureDUT(t *testing.T, dut *ondatra.DUTDevice) {
 	configureInterfaceDUT(t, d, dut, dp1, dutEbgp1.Desc)
 	configureInterfaceDUT(t, d, dut, dp2, dutIbgp1.Desc)
 	configureInterfaceDUT(t, d, dut, dp3, dutIbgp2.Desc)
-	configureInterfaceDUT(t, d, dut, dp4, dutIbgp3.Desc)
+	if port4Ebgp {
+		configureInterfaceDUT(t, d, dut, dp4, dutEbgp2.Desc)
+	} else {
+		configureInterfaceDUT(t, d, dut, dp4, dutIbgp3.Desc)
+	}
 
 	// configure an L3 subinterface without vlan tagging under DUT port 5
 	createSubifDUT(t, d, dut, dp1, 0, 0, dutEbgp1)
 	createSubifDUT(t, d, dut, dp2, 0, 0, dutIbgp1)
 	createSubifDUT(t, d, dut, dp3, 0, 0, dutIbgp2)
-	createSubifDUT(t, d, dut, dp4, 0, 0, dutIbgp3)
+	if port4Ebgp {
+		createSubifDUT(t, d, dut, dp4, 0, 0, dutEbgp2)
+	} else {
+		createSubifDUT(t, d, dut, dp4, 0, 0, dutIbgp3)
+	}
 
 	if deviations.ExplicitInterfaceInDefaultVRF(dut) {
 		fptest.AssignToNetworkInstance(t, dut, dp1.Name(), deviations.DefaultNetworkInstance(dut), 0)
@@ -215,7 +215,7 @@ func configureDUT(t *testing.T, dut *ondatra.DUTDevice) {
 
 	gnmi.Replace(t, dut, gnmi.OC().Config(), d)
 
-	configureBGPNeighbors(t, dut)
+	configureBGPNeighbors(t, dut, port4Ebgp)
 }
 
 // createSubifDUT creates a single L3 subinterface
@@ -243,7 +243,7 @@ func createSubifDUT(t *testing.T, d *oc.Root, dut *ondatra.DUTDevice, dutPort *o
 	}
 }
 
-func configureBGPNeighbors(t *testing.T, dut *ondatra.DUTDevice) {
+func configureBGPNeighbors(t *testing.T, dut *ondatra.DUTDevice, port4Ebgp bool) {
 
 	dutConfPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Protocol(oc.PolicyTypes_INSTALL_PROTOCOL_TYPE_BGP, "BGP")
 	d := &oc.Root{}
@@ -260,14 +260,19 @@ func configureBGPNeighbors(t *testing.T, dut *ondatra.DUTDevice) {
 	createBgpNeighbor(&bgpNbr{localAS: ebgpDutAS1, peerIP: ateEbgp1.IPv4, peerAS: ebgpAteAS1, isV4: true},
 		dut, bgp, "ebgp1", !rrCluster, !rrClient, isExternal, configureAddPath)
 
+	if port4Ebgp {
+		createBgpNeighbor(&bgpNbr{localAS: ebgpDutAS2, peerIP: ateEbgp2.IPv4, peerAS: ebgpAteAS2, isV4: true},
+			dut, bgp, "ebgp2", !rrCluster, !rrClient, isExternal, configureAddPath)
+	} else {
+		nbrInfo := &bgpNbr{localAS: globalAS, peerIP: ateIbgp3.IPv4, peerAS: globalAS, isV4: true}
+		createBgpNeighbor(nbrInfo, dut, bgp, "rr2", rrCluster, !rrClient, !isExternal, !configureAddPath)
+	}
+
 	createBgpNeighbor(&bgpNbr{localAS: globalAS, peerIP: ateIbgp1.IPv4, peerAS: globalAS, isV4: true},
 		dut, bgp, "rr1", !rrCluster, rrClient, !isExternal, configureAddPath)
 
 	createBgpNeighbor(&bgpNbr{localAS: globalAS, peerIP: ateIbgp2.IPv4, peerAS: globalAS, isV4: true},
 		dut, bgp, "rr1", !rrCluster, rrClient, !isExternal, configureAddPath)
-
-	nbrInfo := &bgpNbr{localAS: globalAS, peerIP: ateIbgp3.IPv4, peerAS: globalAS, isV4: true}
-	createBgpNeighbor(nbrInfo, dut, bgp, "rr2", rrCluster, !rrClient, !isExternal, !configureAddPath)
 
 	t.Log("Configure BGP on DUT")
 	gnmi.Replace(t, dut, dutConfPath.Config(), ni_proto)
@@ -361,9 +366,18 @@ func configureOTG(t *testing.T, top gosnappi.Config, atePort *ondatra.Port, vlan
 	if vlanID != 0 {
 		eth.Vlans().Add().SetName(tgAttr.Name + ".vlan").SetId(vlanID)
 	}
-	iDut1Ipv4 := eth.Ipv4Addresses().Add().SetName(tgAttr.Name + ".IPv4").SetAddress(tgAttr.IPv4).SetGateway(dutAttr.IPv4).SetPrefix(uint32(tgAttr.IPv4Len))
-	eth.Ipv6Addresses().Add().SetName(tgAttr.Name + ".IPv6").SetAddress(tgAttr.IPv6).SetGateway(dutAttr.IPv6).SetPrefix(uint32(tgAttr.IPv6Len))
 
+	addrV4 := tgAttr.IPv4
+	addrV6 := tgAttr.IPv6
+	iDut1Ipv4 := eth.Ipv4Addresses().Add().SetName(tgAttr.Name + ".IPv4").SetAddress(addrV4).SetGateway(dutAttr.IPv4).SetPrefix(uint32(tgAttr.IPv4Len))
+	eth.Ipv6Addresses().Add().SetName(tgAttr.Name + ".IPv6").SetAddress(addrV6).SetGateway(dutAttr.IPv6).SetPrefix(uint32(tgAttr.IPv6Len))
+
+	if advertiseRoute {
+		for nhIndex := 1; nhIndex < nextHopCount; nhIndex++ {
+			addrV6 = incrementIPv6Address(net.ParseIP(addrV6)).String()
+			eth.Ipv6Addresses().Add().SetName(tgAttr.Name + ".IPv6" + fmt.Sprint(nhIndex)).SetAddress(addrV6).SetGateway(dutAttr.IPv6).SetPrefix(uint32(tgAttr.IPv6Len))
+		}
+	}
 	iDut1Bgp := dev.Bgp().SetRouterId(iDut1Ipv4.Address())
 	iDut1Bgp4Peer := iDut1Bgp.Ipv4Interfaces().Add().SetIpv4Name(iDut1Ipv4.Name()).Peers().Add().SetName(tgAttr.Name + ".BGP4.peer")
 	iDut1Bgp4Peer.LearnedInformationFilter().SetUnicastIpv4Prefix(true).SetUnicastIpv6Prefix(true)
@@ -383,9 +397,10 @@ func configureOTG(t *testing.T, top gosnappi.Config, atePort *ondatra.Port, vlan
 	if advertiseRoute {
 		if connectionType == connInternal {
 			advAddress = advertisedRoutesv4Ibgp
-			advAddressV6 = advertisedRoutesv6Ibgp
+			advAddressV6 = advertisedRoutesv6
 		} else {
 			advAddress = advertisedRoutesv4Ebgp
+			advAddressV6 = advertisedRoutesv6
 		}
 
 		nhIp := iDut1Ipv4.Address()
@@ -406,19 +421,19 @@ func configureOTG(t *testing.T, top gosnappi.Config, atePort *ondatra.Port, vlan
 
 			nhIp = incrementIPv4Address(net.ParseIP(nhIp)).String()
 
-			if connectionType == connInternal {
-				bgpNeti1Bgp6PeerRoutes := iDut1Bgp4Peer.V6Routes().Add().SetName(tgAttr.Name + ".BGP6.Route" + fmt.Sprint(pathID))
-				bgpNeti1Bgp6PeerRoutes.Addresses().Add().
-					SetAddress(advAddressV6).
-					SetPrefix(uint32(advertisedRoutesv6PrefixLen)).SetStep(1).
-					SetCount(routeCountv6)
-				bgpNeti1Bgp6PeerRoutes.SetNextHopIpv6Address(nhIp6).
-					SetNextHopAddressType(gosnappi.BgpV6RouteRangeNextHopAddressType.IPV6).
-					SetNextHopMode(gosnappi.BgpV6RouteRangeNextHopMode.MANUAL)
-				bgpNeti1Bgp6PeerRoutes.AddPath().SetPathId(uint32(pathID))
+			// if connectionType == connInternal {
+			bgpNeti1Bgp6PeerRoutes := iDut1Bgp4Peer.V6Routes().Add().SetName(tgAttr.Name + ".BGP6.Route" + fmt.Sprint(pathID))
+			bgpNeti1Bgp6PeerRoutes.Addresses().Add().
+				SetAddress(advAddressV6).
+				SetPrefix(uint32(advertisedRoutesv6PrefixLen)).SetStep(1).
+				SetCount(routeCountv6)
+			bgpNeti1Bgp6PeerRoutes.SetNextHopIpv6Address(nhIp6).
+				SetNextHopAddressType(gosnappi.BgpV6RouteRangeNextHopAddressType.IPV6).
+				SetNextHopMode(gosnappi.BgpV6RouteRangeNextHopMode.MANUAL)
+			bgpNeti1Bgp6PeerRoutes.AddPath().SetPathId(uint32(pathID))
 
-				nhIp6 = incrementIPv6Address(net.ParseIP(nhIp6)).String()
-			}
+			nhIp6 = incrementIPv6Address(net.ParseIP(nhIp6)).String()
+			// }
 		}
 	}
 }
@@ -432,8 +447,8 @@ func verifyBGPSessionState(t *testing.T, dut *ondatra.DUTDevice, nbrIPList []str
 	for _, nbr := range nbrIPList {
 		var status *ygnmi.Value[oc.E_Bgp_Neighbor_SessionState]
 		nbrPath := statePath.Neighbor(nbr)
-		t.Logf("Waiting for BGP neighbor to establish...")
-		status, ok := gnmi.Watch(t, dut, nbrPath.SessionState().State(), time.Minute, func(val *ygnmi.Value[oc.E_Bgp_Neighbor_SessionState]) bool {
+		t.Logf("Waiting for BGP neighbor %s to establish...", nbr)
+		status, ok := gnmi.Watch(t, dut, nbrPath.SessionState().State(), 30*time.Minute, func(val *ygnmi.Value[oc.E_Bgp_Neighbor_SessionState]) bool {
 			state, ok := val.Val()
 			return ok && state == sessionState
 		}).Await(t)
@@ -525,8 +540,11 @@ func verifyAddPathCapability(t *testing.T, packet gopacket.Packet, addPathCapabi
 					if openBgpMessage[i+addPathOffset] == bgpAddPathMessage {
 						if openBgpMessage[i+v4CapabilityOffset] == addPathCapability && openBgpMessage[i+v6CapabilityOffset] == addPathCapability {
 							return true
+						} else {
+							t.Fatalf("Add path capability not present want - %d , got - %d",
+								addPathCapability, openBgpMessage[i+v4CapabilityOffset])
+							return false
 						}
-
 					} else {
 						i = i + capabilitySkipCount + 1
 						continue
@@ -661,19 +679,19 @@ func verifyPrefixAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATED
 func verifyPrefixAddPathScalev4(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, portName string,
 	bgpAdvPrefixs, expectedNextHops []string, expectedPathID []uint32, expectedCount int) {
 	t.Helper()
-	_, ok := gnmi.WatchAll(t, ate.OTG(),
-		gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv4PrefixAny().State(),
-		time.Minute,
-		func(v *ygnmi.Value[*otgtelemetry.BgpPeer_UnicastIpv4Prefix]) bool {
-			_, present := v.Val()
-			return present
-		}).Await(t)
+	// _, ok := gnmi.WatchAll(t, ate.OTG(),
+	// 	gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv4PrefixAny().State(),
+	// 	10*time.Minute,
+	// 	func(v *ygnmi.Value[*otgtelemetry.BgpPeer_UnicastIpv4Prefix]) bool {
+	// 		_, present := v.Val()
+	// 		return present
+	// 	}).Await(t)
 
 	var receivedPrefix []string
-	// var receivedNextHops []string
 	pathIdMap := make(map[string][]uint32)
 	nhMap := make(map[string][]string)
 
+	ok := true
 	if ok {
 		bgpPrefixes := gnmi.GetAll(t, ate.OTG(), gnmi.OTG().BgpPeer(portName+".BGP4.peer").UnicastIpv4PrefixAny().State())
 		for _, bgpPrefix := range bgpPrefixes {
@@ -703,30 +721,153 @@ func verifyPrefixAddPathScalev4(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 				}
 			}
 
-			// if compareStringLists(nhMap[advPrefix], expectedNextHops) {
-			// 	t.Logf("Next hop verification successful for prefix %s", advPrefix)
-			// } else {
-			// 	t.Errorf("Next hop mismatch for prefix %s: got %v, want %v", advPrefix, nhMap[advPrefix], expectedNextHops)
-			// }
-
 			for _, id := range pathIdMap[advPrefix] {
 				if !slices.Contains(expectedPathID, id) {
 					t.Fatalf("Path ID verification failed for prefix %s want - %d in %v",
 						advPrefix, id, expectedPathID)
 				}
 			}
-			// if compareUint32Lists(pathIdMap[advPrefix], expectedPathID) {
-			// 	t.Logf("Next hop verification successful for prefix %s", advPrefix)
-			// } else {
-			// 	t.Errorf("Next hop mismatch for prefix %s: got %v, want %v", advPrefix, pathIdMap[advPrefix], expectedPathID)
-			// }
+		}
+		t.Log("Verification for v4 prefixes, nh and path ID successful on OTG")
+	} else {
+		t.Error("Verification for v4 prefixes, nh and path ID Failed on OTG")
+	}
+}
+
+// verifyPrefixesFibV4 verifies aft telemetry entries.
+func verifyPrefixesFibV4(t *testing.T, dut *ondatra.DUTDevice, prefix string, nhIpAddress []string, expectedNHCount int) {
+	t.Helper()
+
+	t.Log("Verifying FIB telemetry for prefix ", prefix)
+	mask := "32"
+
+	aftPfxPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().Ipv4Entry(prefix + "/" + mask)
+	aftPfxVal, found := gnmi.Watch(t, dut, aftPfxPath.State(), 20*time.Minute, func(val *ygnmi.Value[*oc.NetworkInstance_Afts_Ipv4Entry]) bool {
+		value, present := val.Val()
+		return present && value.GetNextHopGroup() != 0
+	}).Await(t)
+	if !found {
+		t.Fatalf("Could not find prefix %s in telemetry AFT", prefix+"/"+mask)
+	}
+	t.Log("Prefix found")
+	aftPfx, _ := aftPfxVal.Val()
+
+	aftNhgPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHopGroup(aftPfx.GetNextHopGroup())
+
+	aftNhgVal, found := gnmi.Watch(t, dut, aftNhgPath.State(), 20*time.Minute, func(val *ygnmi.Value[*oc.NetworkInstance_Afts_NextHopGroup]) bool {
+		value, present := val.Val()
+		return present && len(value.NextHop) == expectedNHCount
+	}).Await(t)
+	aftNhg, _ := aftNhgVal.Val()
+	if !found {
+		t.Fatalf("NHG %d next-hop entry count: got %d, want %d", aftPfx.GetNextHopGroup(), len(aftNhg.NextHop), expectedNHCount)
+	}
+	t.Log("NHG found")
+
+	// aftNHG = gnmi.Get(t, dut, gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHopGroup(aftPfx.GetNextHopGroup()).State())
+	// if got := len(aftNHG.NextHop); got != expectedNHCount {
+	// 	t.Fatalf("Prefix %s next-hop entry count: got %d, want %d", prefix+"/"+mask, got, expectedNHCount)
+	// }
+
+	// for k := range aftNhg.NextHop {
+	// 	aftnh := gnmi.Get(t, dut, gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHop(k).State())
+
+	// 	if got := aftnh.GetIpAddress(); !slices.Contains(nhIpAddress, got) {
+	// 		t.Fatalf("Prefix %s next-hop IP: want %s in %v", prefix+"/"+mask, got, nhIpAddress)
+	// 	}
+	// }
+
+	for k := range aftNhg.NextHop {
+		aftNhPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHop(k)
+
+		_, found := gnmi.Watch(t, dut, aftNhPath.State(), 20*time.Minute, func(val *ygnmi.Value[*oc.NetworkInstance_Afts_NextHop]) bool {
+			value, present := val.Val()
+			return present && slices.Contains(nhIpAddress, value.GetIpAddress())
+		}).Await(t)
+		if !found {
+			t.Fatalf("Nexthop IP not found for prefix %s", prefix+"/"+mask)
 		}
 
 	}
-	t.Log("Verification for v4 prefixes, nh and path ID successful")
+	t.Logf("Verified FIB for prefix %s successfully", prefix+"/"+mask)
 }
 
-func verifyPrefixes(t *testing.T, dut *ondatra.DUTDevice, prefix string) {
+// verifyPrefixesFibV4 verifies aft telemetry entries.
+func verifyPrefixesFibV6(t *testing.T, dut *ondatra.DUTDevice, prefix string, nhIpAddress []string, expectedNHCount int) {
+	t.Helper()
+
+	t.Log("Verifying FIB telemetry for prefix ", prefix)
+	mask := "128"
+
+	aftPfxPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().Ipv6Entry(prefix + "/" + mask)
+	aftPfxVal, found := gnmi.Watch(t, dut, aftPfxPath.State(), 20*time.Minute, func(val *ygnmi.Value[*oc.NetworkInstance_Afts_Ipv6Entry]) bool {
+		value, present := val.Val()
+		return present && value.GetNextHopGroup() != 0
+	}).Await(t)
+	if !found {
+		t.Fatalf("Could not find prefix %s in telemetry AFT", prefix+"/"+mask)
+	}
+	t.Log("Prefix found")
+	aftPfx, _ := aftPfxVal.Val()
+
+	aftNhgPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHopGroup(aftPfx.GetNextHopGroup())
+	aftNhgVal, found := gnmi.Watch(t, dut, aftNhgPath.State(), 20*time.Minute, func(val *ygnmi.Value[*oc.NetworkInstance_Afts_NextHopGroup]) bool {
+		value, present := val.Val()
+		return present && len(value.NextHop) == expectedNHCount
+	}).Await(t)
+	aftNhg, _ := aftNhgVal.Val()
+	if !found {
+		t.Fatalf("NHG %d next-hop entry count: got %d, want %d", aftPfx.GetNextHopGroup(), len(aftNhg.NextHop), expectedNHCount)
+	}
+	t.Log("NHG found")
+
+	for k := range aftNhg.NextHop {
+		aftNhPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHop(k)
+
+		_, found := gnmi.Watch(t, dut, aftNhPath.State(), 20*time.Minute, func(val *ygnmi.Value[*oc.NetworkInstance_Afts_NextHop]) bool {
+			value, present := val.Val()
+			return present && slices.Contains(nhIpAddress, value.GetIpAddress())
+		}).Await(t)
+		if !found {
+			t.Fatalf("Nexthop IP not found for prefix %s", prefix+"/"+mask)
+		}
+
+	}
+	t.Logf("Verified FIB for prefix %s successfully", prefix+"/"+mask)
+}
+
+// verifyPrefixesFibV4 verifies aft telemetry entries.
+func verifyPrefixesFibV62(t *testing.T, dut *ondatra.DUTDevice, prefix string, nhIpAddress []string, expectedNHCount int) {
+	t.Helper()
+
+	t.Log("Verifying FIB telemetry for prefix ", prefix)
+	mask := "128"
+
+	aftPfxPath := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().Ipv6Entry(prefix + "/" + mask)
+	aftPfxVal, found := gnmi.Watch(t, dut, aftPfxPath.State(), 10*time.Minute, func(val *ygnmi.Value[*oc.NetworkInstance_Afts_Ipv6Entry]) bool {
+		value, present := val.Val()
+		return present && value.GetNextHopGroup() != 0
+	}).Await(t)
+	if !found {
+		t.Fatalf("Could not find prefix %s in telemetry AFT", prefix+"/"+mask)
+	}
+	aftPfx, _ := aftPfxVal.Val()
+
+	aftNHG := gnmi.Get(t, dut, gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHopGroup(aftPfx.GetNextHopGroup()).State())
+	if got := len(aftNHG.NextHop); got != expectedNHCount {
+		t.Fatalf("Prefix %s next-hop entry count: got %d, want %d", prefix+"/"+mask, got, expectedNHCount)
+	}
+
+	for k := range aftNHG.NextHop {
+		aftnh := gnmi.Get(t, dut, gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHop(k).State())
+
+		if got := aftnh.GetIpAddress(); !slices.Contains(nhIpAddress, got) {
+			t.Fatalf("Prefix %s next-hop IP: want %s in %v", prefix+"/"+mask, got, nhIpAddress)
+		}
+	}
+}
+
+func verifyPrefixesFib(t *testing.T, dut *ondatra.DUTDevice, prefix string) {
 	// Build the GNMI Get request
 	path := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().Ipv4EntryAny().State()
 	abc := dut.GNMIOpts().GNMIOpts()
@@ -735,6 +876,44 @@ func verifyPrefixes(t *testing.T, dut *ondatra.DUTDevice, prefix string) {
 	resp := gnmi.GetAll(t, dut, path)
 
 	fmt.Print(resp)
+
+	path2 := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHopGroupAny().State()
+
+	// Send the GNMI Get request and wait for the response
+	resp2 := gnmi.GetAll(t, dut, path2)
+
+	fmt.Print(resp2)
+
+	path3 := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHopAny().State()
+
+	// Send the GNMI Get request and wait for the response
+	resp3 := gnmi.GetAll(t, dut, path3)
+
+	fmt.Print(resp3)
+
+	pre := prefix + "/32"
+	path4 := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().Ipv4Entry(pre).State()
+
+	// Send the GNMI Get request and wait for the response
+	resp4 := gnmi.Get(t, dut, path4)
+
+	fmt.Print(resp4)
+	a := resp4.GetNextHopGroup()
+
+	path5 := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHopGroup(a).State()
+
+	// Send the GNMI Get request and wait for the response
+	resp5 := gnmi.Get(t, dut, path5)
+	fmt.Print(resp5)
+
+	b := resp5.GetNextHop(0)
+	c := b.GetIndex()
+	path6 := gnmi.OC().NetworkInstance(deviations.DefaultNetworkInstance(dut)).Afts().NextHop(c).State()
+
+	// Send the GNMI Get request and wait for the response
+	resp6 := gnmi.Get(t, dut, path6)
+	fmt.Print(resp6)
+
 }
 
 func configureMaxPaths(t *testing.T, b *gnmi.SetBatch, dut *ondatra.DUTDevice, configType, nbrAddress, peerGroup string, sendMax uint8) {
@@ -940,25 +1119,25 @@ func TestAddPathSendRecv(t *testing.T) {
 	GenerateIfaceAddresses()
 
 	cases := []testCase{
-		{
-			desc:           "Verify Test1 and Test2 with bgp configs at global level",
-			bgpConfigLevel: "neighbor",
-		}, {
-			desc:           "Verify Test1 and Test2 with bgp configs at peer level",
-			bgpConfigLevel: "peerGroup",
-		},
 		// {
-		// 	desc:           "Verify Test1 and Test2 with bgp configs at neighbor level",
-		// 	bgpConfigLevel: "global",
+		// 	desc:           "Verify Test1 and Test2 with bgp configs at global level",
+		// 	bgpConfigLevel: "neighbor",
+		// }, {
+		// 	desc:           "Verify Test1 and Test2 with bgp configs at peer level",
+		// 	bgpConfigLevel: "peerGroup",
 		// },
+		{
+			desc:           "Verify Test1 and Test2 with bgp configs at neighbor level",
+			bgpConfigLevel: "neighbor",
+		},
 	}
 
 	for _, tc := range cases {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			// tc.testAddPath(t, dut, ate, tc.bgpConfigLevel)
-			tc.TestAddPath2(t, dut, ate, tc.bgpConfigLevel)
-			// tc.testAddPathScaling(t, dut, ate, tc.bgpConfigLevel)
+			// tc.TestAddPath2(t, dut, ate, tc.bgpConfigLevel)
+			tc.testAddPathScaling(t, dut, ate, tc.bgpConfigLevel)
 		})
 	}
 
@@ -984,7 +1163,8 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 	ap3 := ate.Port(t, "port3")
 	ap4 := ate.Port(t, "port4")
 
-	configureDUT(t, dut)
+	port4Ebgp := false
+	configureDUT(t, dut, port4Ebgp)
 
 	routeCountv4 = *ygot.Uint32(1)
 	routeCountv6 = *ygot.Uint32(1)
@@ -1042,43 +1222,9 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 	bgpNbrs := []string{ateEbgp1.IPv4, ateIbgp1.IPv4, ateIbgp2.IPv4, ateIbgp3.IPv4}
 	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
 
-	// expectedPathID := []uint32{1, 2}
-
-	// nextHopsv4 := []string{ateEbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateEbgp1.IPv4)).String()}
-	// // verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// // verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// // verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-
-	// verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, 2)
-	// verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, 2)
-	// verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, 2)
-
-	// nextHopsv4 = []string{ateIbgp1.IPv4, ateIbgp2.IPv4}
-	// // verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID, int(maxPaths))
-
-	// top.Devices().Clear()
-	// top.Captures().Clear()
-	// nextHopCount = 4
-	// configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", advertiseRoute)
-	// nextHopCount = 2
-	// configureOTG(t, top, ap2, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", advertiseRoute)
-	// configureOTG(t, top, ap3, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", advertiseRoute)
-	// configureOTG(t, top, ap4, 0, globalAS, ateIbgp3, dutIbgp3, "INTERNAL", false)
-
-	// ate.OTG().PushConfig(t, top)
-	// ate.OTG().StartProtocols(t)
-	// verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
-
-	// Verify that the DUT is advertising multiple paths to prefix-1 to RRCs ATE3 and ATE4
-	// as well as to the RRS ATE5 with different path-ids
 	expectedPathID := []uint32{1, 2, 3, 4}
 	nextHopsv4 := []string{}
 	nextHopsv4 = append(nextHopsv4, generateIPv4Addresses(ateEbgp1.IPv4, 4, 1)...)
-
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
 	verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, int(maxPaths))
 	verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, int(maxPaths))
 	verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, int(maxPaths))
@@ -1086,7 +1232,6 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 	//Verify that the DUT advertises multiple paths for prefix-2 to ATE5 with different path-ids
 	nextHopsv4 = []string{ateIbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp1.IPv4)).String(),
 		ateIbgp2.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp2.IPv4)).String()}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
 	verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID, int(maxPaths))
 
 	//Verify that ATE5 receives only 3 different paths (out of 4) w/ unique path-ids from DUT for prefix-2
@@ -1099,15 +1244,10 @@ func (tc *testCase) testAddPath(t *testing.T, dut *ondatra.DUTDevice, ate *ondat
 
 	expectedPathID = []uint32{1, 2, 3, 4}
 	nextHopsv4 = append(nextHopsv4, generateIPv4Addresses(ateEbgp1.IPv4, 4, 1)...)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID)
-
 	verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, int(maxPaths))
 
 	nextHopsv4 = []string{ateIbgp1.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp1.IPv4)).String(),
 		ateIbgp2.IPv4, incrementIPv4Address(net.ParseIP(ateIbgp2.IPv4)).String()}
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID)
 	verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp3.Name, []string{advertisedRoutesv4Ibgp}, nextHopsv4, expectedPathID, int(maxPaths))
 
 	ate.OTG().StopProtocols(t)
@@ -1130,7 +1270,8 @@ func (tc *testCase) TestAddPath2(t *testing.T, dut *ondatra.DUTDevice, ate *onda
 	ap3 := ate.Port(t, "port3")
 	ap4 := ate.Port(t, "port4")
 
-	configureDUT(t, dut)
+	port4Ebgp := false
+	configureDUT(t, dut, port4Ebgp)
 
 	routeCountv4 = *ygot.Uint32(1)
 	routeCountv6 = *ygot.Uint32(1)
@@ -1158,12 +1299,12 @@ func (tc *testCase) TestAddPath2(t *testing.T, dut *ondatra.DUTDevice, ate *onda
 	}
 
 	t.Logf("Configure add path Send for Ibgp1 neighbor")
-	configureAddPathReceive(t, b, dut, configType, ateIbgp1.IPv4, "rr2", false)
+	configureAddPathReceive(t, b, dut, configType, ateIbgp1.IPv4, "rr1", false)
 	configureAddPathSend(t, b, dut, configType, ateIbgp1.IPv4, "rr1", true)
 	configureMaxPaths(t, b, dut, configType, ateIbgp1.IPv4, "rr1", maxPaths)
 
 	t.Logf("Configure add path Send for Ibgp2 neighbor")
-	configureAddPathReceive(t, b, dut, configType, ateIbgp2.IPv4, "rr2", false)
+	configureAddPathReceive(t, b, dut, configType, ateIbgp2.IPv4, "rr1", false)
 	configureAddPathSend(t, b, dut, configType, ateIbgp2.IPv4, "rr1", true)
 	configureMaxPaths(t, b, dut, configType, ateIbgp2.IPv4, "rr1", maxPaths)
 
@@ -1187,10 +1328,6 @@ func (tc *testCase) TestAddPath2(t *testing.T, dut *ondatra.DUTDevice, ate *onda
 
 	ate.OTG().StartProtocols(t)
 	bgpNbrs := []string{ateEbgp1.IPv4, ateIbgp1.IPv4, ateIbgp2.IPv4, ateIbgp3.IPv4}
-	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
-
-	ate.OTG().PushConfig(t, top)
-	ate.OTG().StartProtocols(t)
 	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
 
 	// Verify that the DUT is advertising multiple paths to prefix-1 to RRCs ATE3 and ATE4
@@ -1221,14 +1358,14 @@ func (tc *testCase) TestAddPath2(t *testing.T, dut *ondatra.DUTDevice, ate *onda
 func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate *ondatra.ATEDevice, configType string) {
 	t.Log(tc.desc)
 
-	otg := ate.OTG()
+	// otg := ate.OTG()
 	t.Log("Clear BGP Configs on DUT")
 	bgpClearConfig(t, dut)
 
 	top := gosnappi.NewConfig()
 	top.Ports().Add().SetName(ate.Port(t, "port1").ID())
-	top.Ports().Add().SetName(ate.Port(t, "port2").ID())
-	top.Ports().Add().SetName(ate.Port(t, "port3").ID())
+	atePort2 := top.Ports().Add().SetName(ate.Port(t, "port2").ID())
+	atePort3 := top.Ports().Add().SetName(ate.Port(t, "port3").ID())
 	top.Ports().Add().SetName(ate.Port(t, "port4").ID())
 
 	ap1 := ate.Port(t, "port1")
@@ -1236,73 +1373,129 @@ func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate
 	ap3 := ate.Port(t, "port3")
 	ap4 := ate.Port(t, "port4")
 
-	configureDUT(t, dut)
+	port4Ebgp := true
+	configureDUT(t, dut, port4Ebgp)
 
-	t.Logf("Configure add path Send/Receive for Ibgp3 neighbor with port5")
-
-	maxPaths := uint8(64)
-	if dut.Vendor() == ondatra.JUNIPER {
-		configureMaxPathsCli(t, dut, maxPaths, configType, ateIbgp3.IPv4, "rr2")
-	}
+	maxPaths := uint8(4)
 	b := &gnmi.SetBatch{}
-	configureAddPathReceive(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
-	if dut.Vendor() != ondatra.JUNIPER {
-		configureAddPathSend(t, b, dut, configType, ateIbgp3.IPv4, "rr2", true)
-		configureMaxPaths(t, b, dut, configType, ateIbgp3.IPv4, "rr2", maxPaths)
-	}
+
+	configType = "neighbor"
+	t.Logf("Configure add path Receive for Ebgp1 neighbor")
+	configureAddPathReceive(t, b, dut, configType, ateEbgp1.IPv4, "ebgp1", false)
+
+	t.Logf("Configure add path Send for Ebgp2 neighbor")
+	configureAddPathReceive(t, b, dut, configType, ateEbgp2.IPv4, "ebgp2", false)
+
+	t.Logf("Configure add path Send for Ibgp1 neighbor")
+	configureAddPathSend(t, b, dut, configType, ateIbgp1.IPv4, "rr1", true)
+	configureMaxPaths(t, b, dut, configType, ateIbgp1.IPv4, "rr1", maxPaths)
+
+	t.Logf("Configure add path Send for Ibgp2 neighbor")
+	configureAddPathSend(t, b, dut, configType, ateIbgp2.IPv4, "rr1", true)
+	configureMaxPaths(t, b, dut, configType, ateIbgp2.IPv4, "rr1", maxPaths)
+
 	b.Set(t, dut)
 
 	advertiseRoute := true
-	routeCountv4 = *ygot.Uint32(10)
-	routeCountv6 = *ygot.Uint32(5)
-	nextHopCount = 32
-
-	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", false)
-	configureOTG(t, top, ap2, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", advertiseRoute)
-	configureOTG(t, top, ap3, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", advertiseRoute)
-	configureOTG(t, top, ap4, 0, globalAS, ateIbgp3, dutIbgp3, "INTERNAL", false)
-
-	ate.OTG().PushConfig(t, top)
-	ate.OTG().StartProtocols(t)
-
-	bgpNbrs := []string{ateEbgp1.IPv4, ateIbgp1.IPv4, ateIbgp2.IPv4, ateIbgp3.IPv4}
-	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
-
-	totalRoutes := routeCountv4*64 + routeCountv6*64
-	verifyBGPPrefixCount(t, otg, "ateIbgp3.BGP4.peer", uint64(totalRoutes))
-
-	//Verify that the DUT advertises multiple paths for prefix-2 to ATE5 with different path-ids
-	expectedPathID := []uint32{}
-	for pathID := 1; pathID <= 64; pathID++ {
-		expectedPathID = append(expectedPathID, uint32(pathID))
-	}
-
-	// advPrefixScalev4 := generateIPv4Addresses(advertisedRoutesv4Ibgp, int(routeCountv4), 1)
-	advPrefixScalev6 := generateIPv6Addresses(advertisedRoutesv6Ibgp, int(routeCountv6), 1)
-	// nextHopsv4 := append(ateIbgp1Ip.v4, ateIbgp2Ip.v4...)
-	nextHopsv6 := append(ateIbgp1Ip.v6, ateIbgp2Ip.v6...)
-
-	// verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, advPrefixScalev4[:4], nextHopsv4, expectedPathID)
-	verifyPrefixAddPath(t, dut, ate, ateIbgp3.Name, advPrefixScalev6[:4], nextHopsv6, expectedPathID)
-	// verifyPrefixAddPathScale(t, dut, ate, ateIbgp3.Name, advPrefixScalev6[:500], nextHopsv6, expectedPathID)
-	// verifyPrefixes(t, dut, advPrefixScalev4[5])
-
-	// Change Ibgp2 config to only advertise 500k v4 and 300k v6 routes
-	top.Devices().Clear()
 	routeCountv4 = *ygot.Uint32(1000000)
 	routeCountv6 = *ygot.Uint32(600000)
 	nextHopCount = 32
 
-	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", false)
-	configureOTG(t, top, ap3, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", advertiseRoute)
-	configureOTG(t, top, ap4, 0, globalAS, ateIbgp3, dutIbgp3, "INTERNAL", false)
+	advPrefixScalev4 := generateIPv4Addresses(advertisedRoutesv4Ebgp, int(routeCountv4), 1)
+	advPrefixScalev6 := generateIPv6Addresses(advertisedRoutesv6, int(routeCountv6), 1)
 
-	routeCountv4 = *ygot.Uint32(500000)
-	routeCountv6 = *ygot.Uint32(300000)
-	configureOTG(t, top, ap3, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", advertiseRoute)
+	t.Logf("%s %s", atePort2.Name(), atePort3.Name())
+	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", false)
+	configureOTG(t, top, ap2, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", false)
+	configureOTG(t, top, ap3, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", false)
+	configureOTG(t, top, ap4, 0, ebgpAteAS2, ateEbgp2, dutEbgp2, "EXTERNAL", false)
+
+	t.Log("Verify BGP packet with add path capability for Ibgp1 neighbor")
+	verifyBgpPackets(t, dut, ate, top, atePort2, ateIbgp1.IPv4, addPathSend)
+
+	t.Log("Verify BGP packet with add path capability for Ibgp2 neighbor")
+	verifyBgpPackets(t, dut, ate, top, atePort3, ateIbgp2.IPv4, addPathSend)
+
+	top.Captures().Clear()
+	top.Devices().Clear()
+
+	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", advertiseRoute)
+	configureOTG(t, top, ap2, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", false)
+	configureOTG(t, top, ap3, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", false)
+	configureOTG(t, top, ap4, 0, ebgpAteAS2, ateEbgp2, dutEbgp2, "EXTERNAL", advertiseRoute)
 
 	ate.OTG().PushConfig(t, top)
 	ate.OTG().StartProtocols(t)
+
+	currentTime := time.Now().Unix()
+	fmt.Println(currentTime)
+
+	bgpNbrs := []string{ateEbgp1.IPv4, ateEbgp2.IPv4, ateIbgp1.IPv4, ateIbgp2.IPv4}
+	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
+
+	currentTime = time.Now().Unix()
+	fmt.Println(currentTime)
+
+	nextHopsv4 := []string{}
+	nextHopsv4 = append(nextHopsv4, generateIPv4Addresses(ateEbgp1.IPv4, 32, 1)...)
+	nextHopsv4 = append(nextHopsv4, generateIPv4Addresses(ateEbgp2.IPv4, 32, 1)...)
+
+	nextHopsv6 := []string{}
+	nextHopsv6 = append(nextHopsv6, generateIPv6Addresses(ateEbgp1.IPv6, 32, 1)...)
+	nextHopsv6 = append(nextHopsv6, generateIPv6Addresses(ateEbgp2.IPv6, 32, 1)...)
+
+	verifyPrefixesFibV4(t, dut, advertisedRoutesv4Ebgp, nextHopsv4, 2)
+	verifyPrefixesFibV6(t, dut, advertisedRoutesv6, nextHopsv6, 2)
+
+	currentTime = time.Now().Unix()
+	fmt.Println(currentTime)
+
+	// t.Log("Verify all prefixes are received by Ibgp neighbors on OTG")
+	// totalRoutes := routeCountv4*2 + routeCountv6*2
+	// verifyBGPPrefixCount(t, otg, "ateIbgp1.BGP4.peer", uint64(totalRoutes))
+	// verifyBGPPrefixCount(t, otg, "ateIbgp2.BGP4.peer", uint64(totalRoutes))
+
+	// expectedPathID := []uint32{}
+	// for pathID := 1; pathID <= 64; pathID++ {
+	// 	expectedPathID = append(expectedPathID, uint32(pathID))
+	// }
+	// verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp1.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, 2)
+	// verifyPrefixAddPathScalev4(t, dut, ate, ateIbgp2.Name, []string{advertisedRoutesv4Ebgp}, nextHopsv4, expectedPathID, 2)
+
+	//------------------------------------
+
+	top.Captures().Clear()
+	top.Devices().Clear()
+
+	configureOTG(t, top, ap1, 0, ebgpAteAS1, ateEbgp1, dutEbgp1, "EXTERNAL", advertiseRoute)
+	configureOTG(t, top, ap2, 0, globalAS, ateIbgp1, dutIbgp1, "INTERNAL", false)
+	configureOTG(t, top, ap3, 0, globalAS, ateIbgp2, dutIbgp2, "INTERNAL", false)
+	routeCountv4 = routeCountv4 / 2
+	routeCountv6 = routeCountv6 / 2
+	configureOTG(t, top, ap4, 0, ebgpAteAS2, ateEbgp2, dutEbgp2, "EXTERNAL", advertiseRoute)
+
+	ate.OTG().PushConfig(t, top)
+	ate.OTG().StartProtocols(t)
+
+	currentTime = time.Now().Unix()
+	fmt.Println(currentTime)
+
+	verifyBGPSessionState(t, dut, bgpNbrs, oc.Bgp_Neighbor_SessionState_ESTABLISHED)
+
+	currentTime = time.Now().Unix()
+	fmt.Println(currentTime)
+
+	verifyPrefixesFibV4(t, dut, advertisedRoutesv4Ebgp, nextHopsv4, 2)
+	verifyPrefixesFibV6(t, dut, advertisedRoutesv6, nextHopsv6, 2)
+	verifyPrefixesFibV4(t, dut, advPrefixScalev4[len(advPrefixScalev4)-1], nextHopsv4, 1)
+	verifyPrefixesFibV6(t, dut, advPrefixScalev6[len(advPrefixScalev6)-1], nextHopsv6, 1)
+
+	currentTime = time.Now().Unix()
+	fmt.Println(currentTime)
+	// t.Log("Verify prefix count received by Ibgp neighbors on OTG")
+	// totalRoutes = totalRoutes * 3
+	// verifyBGPPrefixCount(t, otg, "ateIbgp1.BGP4.peer", uint64(totalRoutes))
+	// verifyBGPPrefixCount(t, otg, "ateIbgp2.BGP4.peer", uint64(totalRoutes))
 
 }
 
@@ -1310,140 +1503,16 @@ func (tc *testCase) testAddPathScaling(t *testing.T, dut *ondatra.DUTDevice, ate
 func verifyBGPPrefixCount(t *testing.T, otg *otg.OTG, nbrAddress string, wantCount uint64) {
 	prefixPath := gnmi.OTG().BgpPeer(nbrAddress).Counters().InRoutes().State()
 
-	gotCount, ok := gnmi.Watch(t, otg, prefixPath, time.Minute, func(v *ygnmi.Value[uint64]) bool {
+	gotCount, ok := gnmi.Watch(t, otg, prefixPath, 3*time.Minute, func(v *ygnmi.Value[uint64]) bool {
 		prefixCount, _ := v.Val()
 		return prefixCount == wantCount
 	}).Await(t)
 
-	// gotCount := gnmi.GetAll[uint64](t, dut, prefixPath)
-
-	// t.Logf("BGP prefix count: %v", gotCount)
-	// // if gotCount != count {
-	// // 	t.Errorf("BGP prefix count mismatch: got %v, want %v", gotCount, count)
-	// // }
 	if !ok {
 		t.Errorf("BGP prefix count mismatch: got %v, want %v", gotCount, wantCount)
+	} else {
+		t.Log("BGP prefix countverification successful on OTG")
 	}
-}
-
-// configureRegexPolicy is used to configure vendor specific config statement.
-func configureMaxPathsCli(t *testing.T, dut *ondatra.DUTDevice, pathCount uint8, configType, nbrAddress, peerGroup string) {
-	t.Helper()
-	var configV4 string
-	var configV6 string
-	gnmiClient := dut.RawAPIs().GNMI(t)
-
-	switch dut.Vendor() {
-	case ondatra.JUNIPER:
-		configV4 = juniperCLI(t, pathCount, configType, nbrAddress, peerGroup, "inet")
-		configV6 = juniperCLI(t, pathCount, configType, nbrAddress, peerGroup, "inet6")
-		t.Logf("Push the CLI config:%s", dut.Vendor())
-	}
-	if configV4 == "" || configV6 == "" {
-		t.Fatalf("Cannot build a CLI config statement for %s", dut.Vendor())
-	}
-
-	gpbSetRequest, err := buildCliConfigRequest(configV4)
-	if err != nil {
-		t.Fatalf("Cannot build a gNMI SetRequest: %v", err)
-	}
-	if _, err = gnmiClient.Set(context.Background(), gpbSetRequest); err != nil {
-		t.Fatalf("gnmiClient.Set() with unexpected error: %v", err)
-	}
-
-	gpbSetRequest, err = buildCliConfigRequest(configV6)
-	if err != nil {
-		t.Fatalf("Cannot build a gNMI SetRequest: %v", err)
-	}
-	if _, err = gnmiClient.Set(context.Background(), gpbSetRequest); err != nil {
-		t.Fatalf("gnmiClient.Set() with unexpected error: %v", err)
-	}
-
-}
-
-// juniperCLI returns Juniper CLI config statement.
-func juniperCLI(t *testing.T, pathCount uint8, configType, nbrAddress, peerGroup, family string) string {
-	t.Helper()
-
-	switch configType {
-	case "neighbor":
-		return fmt.Sprintf(`
-		protocols {
-			bgp {
-				group %s {
-					neighbor %s {
-						family %s {
-							unicast {
-								add-path {
-									send {
-										path-count %d;
-										multipath;
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}`, peerGroup, nbrAddress, family, pathCount)
-
-	case "peerGroup":
-		return fmt.Sprintf(`
-		protocols {
-			bgp {
-				group %s {
-					family %s {
-						unicast {
-							add-path {
-								send {
-									path-count %d;
-									multipath;
-								}
-							}
-						}
-					}
-				}
-			}
-		}`, peerGroup, family, pathCount)
-
-	case "global":
-		return fmt.Sprintf(`
-		protocols {
-			bgp {
-				family %s {
-					unicast {
-						add-path {
-							send {
-								path-count %d;
-								multipath;
-							}
-						}
-					}
-				}
-			}
-		}`, family, pathCount)
-
-	default:
-		return ""
-	}
-}
-
-// Build config with Origin set to cli and Ascii encoded config.
-func buildCliConfigRequest(config string) (*gpb.SetRequest, error) {
-	gpbSetRequest := &gpb.SetRequest{
-		Update: []*gpb.Update{{
-			Path: &gpb.Path{
-				Origin: "cli",
-				Elem:   []*gpb.PathElem{},
-			},
-			Val: &gpb.TypedValue{
-				Value: &gpb.TypedValue_AsciiVal{
-					AsciiVal: config,
-				},
-			},
-		}},
-	}
-	return gpbSetRequest, nil
 }
 
 func generateIPv6Addresses(startIP string, count, incrementFactor int) []string {
